@@ -1,6 +1,6 @@
 // content_script.js
-// Finds media (videos and images) and injects download/open buttons.
-// v3: Dashboard UI overlay, conditional site injection.
+// Specialized Instagram Media Extractor & Button Injector.
+// Supports: Profile Grid, Post/Reel Modals, Standalone Posts, Feed, Reels, Stories, DMs.
 
 let toystallerBooted = false;
 
@@ -8,13 +8,9 @@ function bootToystaller() {
     if (toystallerBooted) return;
     toystallerBooted = true;
 
-    // Inject platform scripts and page_interceptor.js dynamically into the MAIN world
-    // to ensure they have access to the same window object and execute in order.
+    // Inject platforms/instagram.js and page_interceptor.js into the MAIN world
     const scriptsToInject = [
-        'platforms/generic.js',
         'platforms/instagram.js',
-        'platforms/facebook.js',
-        'platforms/linkedin.js',
         'page_interceptor.js'
     ];
 
@@ -33,7 +29,7 @@ function bootToystaller() {
     injectNext();
 
     injectDownloadButtons();
-    setInterval(injectDownloadButtons, 1500);
+    setInterval(injectDownloadButtons, 1200);
 
     const mediaObserver = new MutationObserver(scheduleInject);
     if (document.documentElement) {
@@ -97,17 +93,14 @@ function scoreVideoUrl(url) {
 
 function pickBestVideoUrl(urls) {
     if (!urls || urls.length === 0) return null;
-    // Strictly filter out DASH fragments which are unplayable in a new tab and cause black screens
     let playable = urls.filter(u => {
         const lower = u.toLowerCase();
         if (lower.includes('bytestart') || lower.includes('byteend')) return false;
         if (lower.includes('videocover') || lower.includes('/image/') || lower.includes('.jpg') || lower.includes('.png') || lower.includes('.webp')) return false;
-        // Reject streaming manifests that cause black screens
         if (lower.includes('.m3u8') || lower.includes('.mpd') || lower.includes('stream_type=dash')) return false;
         return true;
     });
     if (playable.length === 0) {
-        // If absolutely nothing else is available, fallback to whatever we have (except images)
         playable = urls.filter(u => {
             const lower = u.toLowerCase();
             return !(lower.includes('videocover') || lower.includes('/image/') || lower.includes('.jpg') || lower.includes('.png') || lower.includes('.webp'));
@@ -131,7 +124,6 @@ function isRawMediaTab() {
     return false;
 }
 
-// Safe fallback platform — used if platform modules haven't loaded yet
 const FALLBACK_PLATFORM = {
     name: 'fallback',
     hasActiveModal() { return false; },
@@ -153,26 +145,29 @@ const FALLBACK_PLATFORM = {
 const PlatformManager = {
     getPlatform() {
         const platforms = window.ToystallerPlatforms;
-        if (!platforms) return FALLBACK_PLATFORM;
-        const host = window.location.hostname.toLowerCase();
-        if (host.includes('instagram.com')) return platforms['instagram'] || FALLBACK_PLATFORM;
-        if (host.includes('linkedin.com')) return platforms['linkedin'] || FALLBACK_PLATFORM;
-        if (host.includes('facebook.com')) return platforms['facebook'] || FALLBACK_PLATFORM;
-        return platforms['generic'] || FALLBACK_PLATFORM;
+        if (platforms && platforms['instagram']) return platforms['instagram'];
+        if (window.ToystallerActivePlatform) return window.ToystallerActivePlatform;
+        return FALLBACK_PLATFORM;
     }
 };
 
 function injectDownloadButtons() {
     if (isRawMediaTab()) return;
 
-    const mediaElements = document.querySelectorAll('video, img');
     const platform = PlatformManager.getPlatform();
     const hasModal = platform.hasActiveModal();
+
+    // Re-sync existing overlay displays when modal state changes
+    if (window.magicOverlayManager) {
+        window.magicOverlayManager.updateAllPositions();
+    }
+
+    const mediaElements = document.querySelectorAll('video, img');
 
     mediaElements.forEach(media => {
         if (platform.isThumbnail(media)) return;
         
-        // If a modal is open, only inject on elements inside the modal
+        // If a modal is open, strictly ignore any media not inside the modal
         if (hasModal && !platform.isInsideModal(media)) return;
 
         if (window.magicOverlayManager && !window.magicOverlayManager.overlays.has(media)) {
@@ -225,15 +220,9 @@ function injectDownloadButtons() {
                         }
                     }
                     
-                    if (finalUrl && finalUrl.includes('media.licdn.com/dms/image')) {
-                        finalUrl = finalUrl.replace(/\/(100|200|400|800)\//g, '/1000/');
-                    }
-                    
-                    // Do not return blob URLs or internal page URLs as images
                     if (finalUrl) {
                         const lower = finalUrl.toLowerCase();
                         if (lower.startsWith('blob:') || lower.startsWith('data:')) return null;
-                        if (lower.includes('//www.facebook.com') || lower.includes('//facebook.com')) return null;
                         if (lower.includes('//www.instagram.com') || lower.includes('//instagram.com')) return null;
                     }
                     
@@ -264,22 +253,37 @@ function injectDownloadButtons() {
                     e.preventDefault();
                     e.stopPropagation();
                     if (!isVideo) {
-                        safeSendMessage({ action: 'openInNewTab', url: getHighResImageUrl() });
+                        const imgMagicId = Math.random().toString(36).substring(2, 15);
+                        media.setAttribute('data-magic-id', imgMagicId);
+                        let resolved = false;
+                        const handler = (ev) => {
+                            if (!ev.data || ev.data.type !== 'magic_response_react_url_' + imgMagicId) return;
+                            if (resolved) return;
+                            resolved = true;
+                            window.removeEventListener('message', handler);
+                            if (ev.data.url) {
+                                safeSendMessage({ action: 'openInNewTab', url: ev.data.url });
+                            } else {
+                                safeSendMessage({ action: 'openInNewTab', url: getHighResImageUrl() });
+                            }
+                        };
+                        window.addEventListener('message', handler);
+                        window.postMessage({ type: 'magic_get_react_url', id: imgMagicId, isVideo: false }, '*');
+                        setTimeout(() => {
+                            if (resolved) return;
+                            resolved = true;
+                            window.removeEventListener('message', handler);
+                            safeSendMessage({ action: 'openInNewTab', url: getHighResImageUrl() });
+                        }, 250);
                     } else {
                         getMediaUrl((url) => {
-                            const host = window.location.hostname.toLowerCase();
-                            // Trigger direct download instead of new tab to avoid referrer/session blocking for FB/LI
-                            if (host.includes('facebook.com') || host.includes('linkedin.com')) {
-                                safeSendMessage({ action: 'downloadMedia', url: url });
-                            } else {
-                                safeSendMessage({ action: 'openInNewTab', url: url });
-                            }
+                            safeSendMessage({ action: 'openInNewTab', url: url });
                         });
                     }
                 });
                 buttons.push(openBtn);
 
-                // Red Button: Open Thumbnail/Image in new tab (same arrow icon, red hover)
+                // Red Button: Open Thumbnail/Poster in new tab
                 const imgBtn = document.createElement('button');
                 imgBtn.className = 'magic-img-btn';
                 imgBtn.title = isVideo ? 'Open thumbnail in new tab' : 'Open image in new tab';
@@ -296,11 +300,10 @@ function injectDownloadButtons() {
                 imgBtn.addEventListener('click', (e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    const host = window.location.hostname.toLowerCase();
                     if (isVideo) {
                         let poster = media.getAttribute('poster');
                         
-                        // Fallback 1: Look for a nearby image tag (very common in Instagram/Facebook custom players)
+                        // Fallback 1: Look for nearby image tag
                         if (!poster) {
                             let current = media;
                             for (let i = 0; i < 4 && current && !poster; i++) {
@@ -312,63 +315,36 @@ function injectDownloadButtons() {
                             }
                         }
 
-                        // Fallback 2: LinkedIn specific network interception
-                        if (!poster) {
-                            if (host.includes('linkedin.com')) {
-                                if (pageInterceptedVideoUrls.size > 0) {
-                                    const covers = Array.from(pageInterceptedVideoUrls).filter(u => u.includes('videocover'));
-                                    if (covers.length > 0) poster = covers[0];
-                                }
-                                
-                                if (!poster) {
-                                    safeSendMessage({ action: 'getMediaUrls', mediaType: 'img' }, (response) => {
-                                        if (response && response.urls && response.urls.length > 0) {
-                                            const covers = response.urls.filter(u => u.includes('videocover'));
-                                            if (covers.length > 0) {
-                                                safeSendMessage({ action: 'openInNewTab', url: covers[0] });
-                                                return;
-                                            }
-                                        }
-                                        alert('No thumbnail image available for this video.');
-                                    });
-                                    return;
-                                }
-                            }
-                        }
-
-                        // Fallback 3: Use React Fiber extraction for images (common on Instagram and Facebook)
-                        if (!poster && (host.includes('instagram.com') || host.includes('facebook.com'))) {
-                            const magicId = Math.random().toString(36).substring(2, 15);
-                            media.setAttribute('data-magic-id', magicId);
-                            let resolved = false;
-                            const handler = (e) => {
-                                if (!e.data || e.data.type !== 'magic_response_react_url_' + magicId) return;
-                                if (resolved) return;
-                                resolved = true;
-                                window.removeEventListener('message', handler);
-                                if (e.data.url) {
-                                    safeSendMessage({ action: 'openInNewTab', url: e.data.url });
-                                } else {
-                                    alert('No thumbnail image available for this video.');
-                                }
-                            };
-                            window.addEventListener('message', handler);
-                            window.postMessage({ type: 'magic_get_react_url', id: magicId, isVideo: false }, '*');
-                            
-                            setTimeout(() => {
-                                if (resolved) return;
-                                resolved = true;
-                                window.removeEventListener('message', handler);
+                        // Fallback 2: React Fiber extraction for poster
+                        const thumbMagicId = Math.random().toString(36).substring(2, 15);
+                        media.setAttribute('data-magic-id', thumbMagicId);
+                        let resolved = false;
+                        const handler = (ev) => {
+                            if (!ev.data || ev.data.type !== 'magic_response_react_url_' + thumbMagicId) return;
+                            if (resolved) return;
+                            resolved = true;
+                            window.removeEventListener('message', handler);
+                            if (ev.data.url) {
+                                safeSendMessage({ action: 'openInNewTab', url: ev.data.url });
+                            } else if (poster) {
+                                safeSendMessage({ action: 'openInNewTab', url: poster });
+                            } else {
                                 alert('No thumbnail image available for this video.');
-                            }, 500);
-                            return; // exit early because it's async
-                        }
-
-                        if (poster) {
-                            safeSendMessage({ action: 'openInNewTab', url: poster });
-                        } else {
-                            alert('No thumbnail image available for this video.');
-                        }
+                            }
+                        };
+                        window.addEventListener('message', handler);
+                        window.postMessage({ type: 'magic_get_react_url', id: thumbMagicId, isVideo: false }, '*');
+                        
+                        setTimeout(() => {
+                            if (resolved) return;
+                            resolved = true;
+                            window.removeEventListener('message', handler);
+                            if (poster) {
+                                safeSendMessage({ action: 'openInNewTab', url: poster });
+                            } else {
+                                alert('No thumbnail image available for this video.');
+                            }
+                        }, 350);
                     } else {
                         safeSendMessage({ action: 'openInNewTab', url: getHighResImageUrl() });
                     }
@@ -383,16 +359,13 @@ function injectDownloadButtons() {
                 if (!isVideo) return;
                 getMediaUrl((url) => {
                     if (url) {
-                        // Cache the resolved URL and show the button
                         openBtn.__resolvedVideoUrl = url;
                         openBtn.style.display = 'flex';
                     }
-                    // If no URL found, button stays hidden
-                }, true); // Silent check
+                }, true);
             };
 
             const getMediaUrl = (callback, silent = false) => {
-                // Step 1: Try React Fiber extraction (works on Instagram)
                 if (isVideo) {
                     let resolved = false;
                     const handler = (e) => {
@@ -403,18 +376,7 @@ function injectDownloadButtons() {
                         if (e.data.url) {
                             callback(e.data.url);
                         } else {
-                            if (window.location.hostname.includes('facebook.com') && isVideo) {
-                                // Fallback for Facebook: attempt mobile site extraction via background script
-                                safeSendMessage({ action: 'fetchMobileFacebookVideo', url: window.location.href }, (response) => {
-                                    if (response && response.url) {
-                                        callback(response.url);
-                                    } else {
-                                        getMediaUrlFallback(callback, silent);
-                                    }
-                                });
-                            } else {
-                                getMediaUrlFallback(callback, silent);
-                            }
+                            getMediaUrlFallback(callback, silent);
                         }
                     };
                     window.addEventListener('message', handler);
@@ -425,7 +387,7 @@ function injectDownloadButtons() {
                         resolved = true;
                         window.removeEventListener('message', handler);
                         getMediaUrlFallback(callback, silent);
-                    }, 300);
+                    }, 350);
                     return;
                 }
 
@@ -435,10 +397,7 @@ function injectDownloadButtons() {
             const getMediaUrlFallback = (callback, silent = false) => {
                 const currentSrc = media.currentSrc || media.src || '';
                 const isBlobSource = currentSrc.startsWith('blob:') || currentSrc.startsWith('data:');
-                const host = window.location.hostname.toLowerCase();
 
-                // Social platform blob: fallback since they use blob: URLs and filename matching is impossible.
-                // Grab the best platform-specific CDN video URL from intercepted URLs.
                 if (isVideo && isBlobSource && pageInterceptedVideoUrls.size > 0) {
                     const platform = PlatformManager.getPlatform();
                     const platformVideos = platform.filterBackgroundUrls ? platform.filterBackgroundUrls(Array.from(pageInterceptedVideoUrls), true) : Array.from(pageInterceptedVideoUrls);
@@ -479,9 +438,7 @@ function injectDownloadButtons() {
 
                 const isInternalPage = (urlStr) => {
                     const lower = (urlStr || '').toLowerCase();
-                    return lower.includes('//www.facebook.com') ||
-                           lower.includes('//facebook.com') ||
-                           lower.includes('//www.instagram.com') ||
+                    return lower.includes('//www.instagram.com') ||
                            lower.includes('//instagram.com');
                 };
 
@@ -532,9 +489,7 @@ function injectDownloadButtons() {
 
             if (window.magicOverlayManager) {
                 window.magicOverlayManager.addOverlay(media, createButtonsFn);
-                // After overlay is created, pre-resolve the video URL
                 if (isVideo) {
-                    // Small delay to let the overlay manager create the buttons
                     setTimeout(() => {
                         const overlay = window.magicOverlayManager.overlays.get(media);
                         if (overlay && overlay.container) {
@@ -556,24 +511,11 @@ function scheduleInject() {
     injectTimer = setTimeout(() => {
         injectTimer = null;
         injectDownloadButtons();
-    }, 200);
+    }, 150);
 }
 
-// Removed direct calls; handled by bootToystaller()
-
-const defaultAllowed = ['instagram.com', 'linkedin.com'];
-const currentHost = window.location.hostname.toLowerCase();
-const isDefault = defaultAllowed.some(s => currentHost.includes(s));
-
-if (isDefault) {
-    bootToystaller();
-} else {
-    chrome.storage.local.get({ globalEnabled: false, allowedSites: defaultAllowed }, (result) => {
-        if (result.globalEnabled || result.allowedSites.some(s => currentHost.includes(s))) {
-            bootToystaller();
-        }
-    });
-}
+// Automatically boot for Instagram
+bootToystaller();
 
 // --- Dashboard UI Injection ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -593,195 +535,98 @@ function toggleDashboardOverlay() {
     }
 
     dashboardHost = document.createElement('div');
-    // Ensure highest z-index and fixed position
     dashboardHost.style.cssText = 'position: fixed; top: 20px; right: 20px; z-index: 2147483647;';
     document.body.appendChild(dashboardHost);
 
     const shadow = dashboardHost.attachShadow({ mode: 'open' });
 
-    chrome.storage.local.get({ globalEnabled: false, allowedSites: ['instagram.com', 'linkedin.com'] }, (result) => {
-        const host = window.location.hostname.toLowerCase();
-        const isAllowed = result.allowedSites.some(s => host.includes(s));
-
-        shadow.innerHTML = `
-            <style>
-                :host {
-                    all: initial;
-                    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                }
-                .dashboard {
-                    width: 320px;
-                    background: rgba(20, 20, 20, 0.85);
-                    backdrop-filter: blur(16px);
-                    -webkit-backdrop-filter: blur(16px);
-                    border: 1px solid rgba(255, 255, 255, 0.1);
-                    border-radius: 16px;
-                    padding: 20px;
-                    color: #fff;
-                    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-                    animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-                }
-                @keyframes slideIn {
-                    from { opacity: 0; transform: translateY(-20px) scale(0.95); }
-                    to { opacity: 1; transform: translateY(0) scale(1); }
-                }
-                .header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 20px;
-                }
-                .header h2 {
-                    margin: 0;
-                    font-size: 18px;
-                    font-weight: 600;
-                    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                }
-                .close-btn {
-                    background: none;
-                    border: none;
-                    color: #aaa;
-                    cursor: pointer;
-                    font-size: 20px;
-                    transition: color 0.2s;
-                    padding: 0;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    width: 24px;
-                    height: 24px;
-                    border-radius: 4px;
-                }
-                .close-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
-                
-                .setting-row {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 16px;
-                    padding-bottom: 16px;
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-                }
-                .setting-row:last-child {
-                    margin-bottom: 0;
-                    padding-bottom: 0;
-                    border-bottom: none;
-                }
-                .setting-info h3 {
-                    margin: 0 0 4px 0;
-                    font-size: 14px;
-                    font-weight: 500;
-                }
-                .setting-info p {
-                    margin: 0;
-                    font-size: 12px;
-                    color: #aaa;
-                }
-                
-                .switch {
-                    position: relative;
-                    display: inline-block;
-                    width: 44px;
-                    height: 24px;
-                }
-                .switch input { opacity: 0; width: 0; height: 0; }
-                .slider {
-                    position: absolute;
-                    cursor: pointer;
-                    top: 0; left: 0; right: 0; bottom: 0;
-                    background-color: rgba(255, 255, 255, 0.1);
-                    transition: .3s;
-                    border-radius: 24px;
-                }
-                .slider:before {
-                    position: absolute;
-                    content: "";
-                    height: 18px;
-                    width: 18px;
-                    left: 3px;
-                    bottom: 3px;
-                    background-color: white;
-                    transition: .3s;
-                    border-radius: 50%;
-                    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-                }
-                input:checked + .slider {
-                    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-                }
-                input:checked + .slider:before {
-                    transform: translateX(20px);
-                }
-                .btn {
-                    width: 100%;
-                    padding: 10px;
-                    border-radius: 8px;
-                    border: none;
-                    background: rgba(255, 255, 255, 0.1);
-                    color: white;
-                    font-weight: 600;
-                    cursor: pointer;
-                    margin-top: 15px;
-                    transition: background 0.2s;
-                }
-                .btn:hover { background: rgba(255, 255, 255, 0.15); }
-            </style>
-            
-            <div class="dashboard">
-                <div class="header">
-                    <h2>Toystaller v5</h2>
-                    <button class="close-btn" id="closeBtn" title="Close">&times;</button>
-                </div>
-                
-                <div class="setting-row">
-                    <div class="setting-info">
-                        <h3>Enable on this site</h3>
-                        <p>${host || 'Local file'}</p>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="siteToggle" ${isAllowed ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <div class="setting-row">
-                    <div class="setting-info">
-                        <h3>Global Override</h3>
-                        <p>Enable Toystaller everywhere</p>
-                    </div>
-                    <label class="switch">
-                        <input type="checkbox" id="globalToggle" ${result.globalEnabled ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                
-                <button class="btn" id="reloadBtn" style="display: none;">Reload Page to Apply</button>
+    shadow.innerHTML = `
+        <style>
+            :host {
+                all: initial;
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            }
+            .dashboard {
+                width: 320px;
+                background: rgba(20, 20, 20, 0.85);
+                backdrop-filter: blur(16px);
+                -webkit-backdrop-filter: blur(16px);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 16px;
+                padding: 20px;
+                color: #fff;
+                box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+                animation: slideIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            }
+            @keyframes slideIn {
+                from { opacity: 0; transform: translateY(-20px) scale(0.95); }
+                to { opacity: 1; transform: translateY(0) scale(1); }
+            }
+            .header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+            .header h2 {
+                margin: 0;
+                font-size: 18px;
+                font-weight: 600;
+                background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+                -webkit-background-clip: text;
+                -webkit-text-fill-color: transparent;
+            }
+            .close-btn {
+                background: none;
+                border: none;
+                color: #aaa;
+                cursor: pointer;
+                font-size: 20px;
+                transition: color 0.2s;
+                padding: 0;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                width: 24px;
+                height: 24px;
+                border-radius: 4px;
+            }
+            .close-btn:hover { color: #fff; background: rgba(255,255,255,0.1); }
+            .info-row {
+                font-size: 13px;
+                color: #aaa;
+                text-align: center;
+                padding: 8px 0;
+            }
+            .specialization {
+                margin-top: 10px;
+                padding: 12px;
+                background: rgba(255, 255, 255, 0.05);
+                border-radius: 8px;
+                font-size: 12px;
+                line-height: 1.5;
+                color: #ddd;
+                border-left: 3px solid #4facfe;
+            }
+        </style>
+        
+        <div class="dashboard">
+            <div class="header">
+                <h2>Toystaller v6 — Instagram</h2>
+                <button class="close-btn" id="closeBtn" title="Close">&times;</button>
             </div>
-        `;
+            <div class="info-row">
+                Active on Instagram
+            </div>
+            <div class="specialization">
+                <strong>Features:</strong><br/>
+                • Profile Grid & High-Res Avatar Downloads<br/>
+                • Modal Post & Reel Video HD Extraction<br/>
+                • Dedicated Reels & Stories Support<br/>
+                • Zero Overlay Bleed & Instant Dialog Isolation
+            </div>
+        </div>
+    `;
 
-        shadow.getElementById('closeBtn').addEventListener('click', toggleDashboardOverlay);
-
-        const reloadBtn = shadow.getElementById('reloadBtn');
-        const showReload = () => { reloadBtn.style.display = 'block'; };
-
-        shadow.getElementById('siteToggle').addEventListener('change', (e) => {
-            const checked = e.target.checked;
-            chrome.storage.local.get({ allowedSites: ['instagram.com', 'linkedin.com'] }, (res) => {
-                let sites = res.allowedSites;
-                if (checked) {
-                    if (!sites.includes(host)) sites.push(host);
-                } else {
-                    sites = sites.filter(s => s !== host);
-                }
-                chrome.storage.local.set({ allowedSites: sites }, showReload);
-            });
-        });
-
-        shadow.getElementById('globalToggle').addEventListener('change', (e) => {
-            chrome.storage.local.set({ globalEnabled: e.target.checked }, showReload);
-        });
-
-        reloadBtn.addEventListener('click', () => window.location.reload());
-    });
+    shadow.getElementById('closeBtn').addEventListener('click', toggleDashboardOverlay);
 }

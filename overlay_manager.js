@@ -1,7 +1,6 @@
 // overlay_manager.js
 // Tracks media elements and positions action buttons safely on document.body.
-// v2: smart corner placement + reliable hover via cursor bounds (works when
-// sites layer invisible divs over <video> and block mouseenter on the tag).
+// v3: Section-aware modal suppression, zero-bleed backdrop isolation, smart corner placement.
 
 class OverlayManager {
     constructor() {
@@ -9,14 +8,41 @@ class OverlayManager {
         this.activeEntry = null;
         this.hideTimeout = null;
 
-        this._onMouseMove = this._throttle(this._handlePointerMove.bind(this), 40);
+        this._onMouseMove = this._throttle(this._handlePointerMove.bind(this), 30);
         document.addEventListener('mousemove', this._onMouseMove, true);
         document.addEventListener('pointermove', this._onMouseMove, true);
 
         window.addEventListener('scroll', () => this.updateAllPositions(), true);
         window.addEventListener('resize', () => this.updateAllPositions());
 
+        // Instant modal listener — when a dialog/modal opens or closes, immediately sync overlay visibility
+        this._modalObserver = new MutationObserver(() => {
+            this.updateAllPositions();
+        });
+        const obsTarget = document.documentElement || document.body;
+        if (obsTarget) {
+            this._modalObserver.observe(obsTarget, {
+                childList: true,
+                subtree: true,
+                attributes: true,
+                attributeFilter: ['role', 'aria-modal', 'class']
+            });
+        }
+
         setInterval(() => this.updateAllPositions(), 1000);
+    }
+
+    _getPlatform() {
+        if (typeof PlatformManager !== 'undefined') {
+            return PlatformManager.getPlatform();
+        }
+        if (window.ToystallerActivePlatform) {
+            return window.ToystallerActivePlatform;
+        }
+        if (window.ToystallerPlatforms && window.ToystallerPlatforms['instagram']) {
+            return window.ToystallerPlatforms['instagram'];
+        }
+        return null;
     }
 
     _throttle(fn, ms) {
@@ -77,7 +103,6 @@ class OverlayManager {
                     
                     const parentRect = node.getBoundingClientRect();
                     
-                    // Calculate intersection area
                     const intersectLeft = Math.max(mediaRect.left, parentRect.left);
                     const intersectTop = Math.max(mediaRect.top, parentRect.top);
                     const intersectRight = Math.min(mediaRect.right, parentRect.right);
@@ -86,12 +111,10 @@ class OverlayManager {
                     const intersectWidth = intersectRight - intersectLeft;
                     const intersectHeight = intersectBottom - intersectTop;
                     
-                    // If no intersection at all, it's fully clipped
                     if (intersectWidth <= 0 || intersectHeight <= 0) {
                         return true;
                     }
                     
-                    // If less than 40% of the media area is visible inside the parent, treat it as clipped
                     const intersectArea = intersectWidth * intersectHeight;
                     const mediaArea = mediaRect.width * mediaRect.height;
                     
@@ -124,10 +147,22 @@ class OverlayManager {
         const x = e.clientX;
         const y = e.clientY;
 
+        const platform = this._getPlatform();
+        const hasModal = platform && platform.hasActiveModal ? platform.hasActiveModal() : false;
+
         let hoverCandidates = [];
 
         // 1. Check if hovering directly over an existing button
         for (const [media, entry] of this.overlays.entries()) {
+            // Modal isolation: If a modal is open, strictly ignore any media not inside the modal
+            if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
+                if (entry.container.style.display !== 'none') {
+                    entry.container.style.display = 'none';
+                    entry.container.style.visibility = 'hidden';
+                }
+                continue;
+            }
+
             if (entry.container.style.display === 'none') continue;
 
             const btnRect = entry.container.getBoundingClientRect();
@@ -150,13 +185,13 @@ class OverlayManager {
             return;
         }
 
-        if (hoverCandidates.length === 1) {
-            this._show(hoverCandidates[0].entry);
+        // 2. Use document.elementsFromPoint to ensure we only trigger elements that the user is actually hovering
+        const hits = document.elementsFromPoint(x, y);
+        if (!hits || hits.length === 0) {
+            this._scheduleHide();
             return;
         }
 
-        // 2. Multiple overlapping media elements. Find the topmost one using native z-index/stacking!
-        const hits = document.elementsFromPoint(x, y);
         let matchedCandidates = [];
 
         for (const el of hits) {
@@ -182,9 +217,9 @@ class OverlayManager {
             return;
         }
 
-        // Fallback: If elementsFromPoint failed to match (e.g. full-screen transparent interceptor div),
-        // we assume the most recently added overlay (last in the Map) is the topmost (like a modal).
-        this._show(hoverCandidates[hoverCandidates.length - 1].entry);
+        // If no candidate was actually hit by elementsFromPoint (e.g. hovering on dialog background / comments),
+        // hide any active overlay rather than guessing incorrectly.
+        this._scheduleHide();
     }
 
     _show(entry) {
@@ -192,13 +227,18 @@ class OverlayManager {
         if (this.activeEntry && this.activeEntry !== entry) {
             this._hide(this.activeEntry);
         }
+        entry.container.style.display = 'flex';
         entry.container.style.opacity = '1';
         entry.container.style.visibility = 'visible';
+        entry.container.style.pointerEvents = 'auto';
         this.activeEntry = entry;
     }
 
     _hide(entry) {
+        if (!entry || !entry.container) return;
         entry.container.style.opacity = '0';
+        entry.container.style.visibility = 'hidden';
+        entry.container.style.pointerEvents = 'none';
     }
 
     _scheduleHide() {
@@ -208,11 +248,17 @@ class OverlayManager {
                 this._hide(entry);
             }
             this.activeEntry = null;
-        }, 300);
+        }, 250);
     }
 
     addOverlay(media, createButtonsFn) {
         if (this.overlays.has(media)) return;
+
+        const platform = this._getPlatform();
+        const hasModal = platform && platform.hasActiveModal ? platform.hasActiveModal() : false;
+        if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
+            return;
+        }
 
         const container = document.createElement('div');
         container.className = 'magic-dl-overlay';
@@ -238,7 +284,14 @@ class OverlayManager {
         const hoverHost = this._findHoverHost(media);
         const hostShow = () => {
             const entry = this.overlays.get(media);
-            if (entry) this._show(entry);
+            if (entry) {
+                const curPlatform = this._getPlatform();
+                const curModal = curPlatform && curPlatform.hasActiveModal ? curPlatform.hasActiveModal() : false;
+                if (curModal && curPlatform && curPlatform.isInsideModal && !curPlatform.isInsideModal(media)) {
+                    return;
+                }
+                this._show(entry);
+            }
         };
         const hostHide = () => this._scheduleHide();
 
@@ -262,7 +315,7 @@ class OverlayManager {
                 entry.isVisible = e.isIntersecting;
                 this.updatePosition(media, container);
             }
-        }, { threshold: 0.15 }); // Require at least 15% visibility
+        }, { threshold: 0.15 });
         
         entry.intersectionObserver.observe(media);
 
@@ -304,10 +357,11 @@ class OverlayManager {
     }
 
     getPlatformConfig() {
-        if (typeof PlatformManager !== 'undefined') {
-            return PlatformManager.getPlatform().getPlatformConfig(window.location.pathname.toLowerCase());
+        const platform = this._getPlatform();
+        if (platform && platform.getPlatformConfig) {
+            return platform.getPlatformConfig(window.location.pathname.toLowerCase());
         }
-        return { preferredCorners: ['bottom-right', 'bottom-left', 'top-left'], padding: 10 };
+        return { preferredCorners: ['top-left', 'bottom-left', 'top-right'], padding: 12 };
     }
 
     cornerHasConflict(media, rect, corner, width, height, pad = 12) {
@@ -355,28 +409,13 @@ class OverlayManager {
 
         const corners = [...config.preferredCorners];
 
-        // For non-social platforms, if media is near the top-right viewport edge,
-        // prioritize bottom-left to avoid clashing with close icons.
-        const host = window.location.hostname.toLowerCase();
-        if (!host.includes('instagram.com') && !host.includes('linkedin.com') && !host.includes('facebook.com')) {
-            const nearTop = rect.top < 72;
-            const nearRight = rect.right > window.innerWidth - 72;
-            if (nearTop && nearRight) {
-                const idx = corners.indexOf('bottom-left');
-                if (idx > -1) {
-                    corners.splice(idx, 1);
-                    corners.unshift('bottom-left');
-                }
-            }
-        }
-
         for (const corner of corners) {
             if (!this.cornerHasConflict(media, rect, corner, width, height, config.padding)) {
                 return corner;
             }
         }
 
-        return corners[0] || 'bottom-right';
+        return corners[0] || 'top-left';
     }
 
     applyCornerPosition(rect, container, corner) {
@@ -404,8 +443,8 @@ class OverlayManager {
                 container.style.left = `${rect.right - width - pad}px`;
                 break;
             default:
-                container.style.top = `${rect.bottom - height - pad}px`;
-                container.style.left = `${rect.right - width - pad}px`;
+                container.style.top = `${rect.top + pad + topOffset}px`;
+                container.style.left = `${rect.left + pad}px`;
         }
     }
 
@@ -422,14 +461,35 @@ class OverlayManager {
             return;
         }
 
+        const platform = this._getPlatform();
+        const hasModal = platform && platform.hasActiveModal ? platform.hasActiveModal() : false;
+
+        // Modal isolation check
+        if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
+            container.style.display = 'none';
+            container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
+            if (this.activeEntry === entry) this.activeEntry = null;
+            return;
+        }
+
+        // Section thumbnail/eligibility check
+        if (platform && platform.isThumbnail && platform.isThumbnail(media)) {
+            container.style.display = 'none';
+            container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
+            if (this.activeEntry === entry) this.activeEntry = null;
+            return;
+        }
+
         const rect = media.getBoundingClientRect();
-        
         const style = window.getComputedStyle(media);
         const isStyleHidden = style.opacity === '0' || style.visibility === 'hidden' || style.display === 'none';
 
         if (rect.width === 0 || rect.height === 0 || !entry.isVisible || isStyleHidden || this._isClippedByAncestor(media)) {
             container.style.display = 'none';
             container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
             return;
         }
 
@@ -441,12 +501,15 @@ class OverlayManager {
         if (fullyAbove || fullyBelow || fullyLeft || fullyRight) {
             container.style.display = 'none';
             container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
             return;
         }
 
         container.style.display = 'flex';
         if (this.activeEntry === entry) {
             container.style.visibility = 'visible';
+            container.style.opacity = '1';
+            container.style.pointerEvents = 'auto';
         }
 
         const corner = this.pickBestCorner(media, rect, container);
@@ -455,6 +518,15 @@ class OverlayManager {
     }
 
     updateAllPositions() {
+        const platform = this._getPlatform();
+        const hasModal = platform && platform.hasActiveModal ? platform.hasActiveModal() : false;
+
+        // If an active modal is open and the activeEntry is outside the modal, instantly reset it
+        if (hasModal && this.activeEntry && platform && platform.isInsideModal && !platform.isInsideModal(this.activeEntry.hoverHost)) {
+            this._hide(this.activeEntry);
+            this.activeEntry = null;
+        }
+
         for (const [media, entry] of this.overlays.entries()) {
             this.updatePosition(media, entry.container);
         }

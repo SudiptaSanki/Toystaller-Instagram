@@ -19,19 +19,16 @@
     "storage"
   ],
   "host_permissions": [
-    "<all_urls>"
+    "*://*.instagram.com/*"
   ],
   "background": {
     "service_worker": "background_script.js"
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["*://*.instagram.com/*"],
       "js": [
-        "platforms/generic.js",
         "platforms/instagram.js",
-        "platforms/facebook.js",
-        "platforms/linkedin.js",
         "overlay_manager.js",
         "content_script.js"
       ],
@@ -51,12 +48,9 @@
     {
       "resources": [
         "page_interceptor.js",
-        "platforms/generic.js",
-        "platforms/instagram.js",
-        "platforms/facebook.js",
-        "platforms/linkedin.js"
+        "platforms/instagram.js"
       ],
-      "matches": ["<all_urls>"]
+      "matches": ["*://*.instagram.com/*"]
     }
   ],
   "action": {

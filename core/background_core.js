@@ -1,5 +1,6 @@
-// background_script.js
-// Listens for media network requests and handles downloads / new-tab opens.
+// core/background_core.js
+// Shared background script logic — network interception, downloads, tab management.
+// Each platform extension imports this and can add platform-specific handlers.
 
 const interceptedMedia = {};
 
@@ -56,6 +57,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         chrome.tabs.create({ url: request.url });
         sendResponse({ success: true });
     }
+    // Platform-specific handlers are added by each extension's background.js
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
