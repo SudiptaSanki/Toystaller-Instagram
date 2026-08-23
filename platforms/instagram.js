@@ -92,7 +92,7 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
                 return { preferredCorners: ['top-left', 'bottom-left'], padding: 16 };
             }
             if (section === 'stories') {
-                return { preferredCorners: ['bottom-left', 'top-left'], padding: 16, topOffset: 48 };
+                return { preferredCorners: ['top-left', 'top-left'], padding: 16, topOffset: 48 };
             }
             if (section === 'direct') {
                 return { preferredCorners: ['top-left', 'top-right'], padding: 8 };
@@ -469,7 +469,7 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
             if (section === 'modal')          return 1.0;
             if (section === 'reels')          return 1.0;
             if (section === 'post_standalone') return 1.0;
-            if (section === 'stories')        return 0.9;
+            if (section === 'stories')        return 1.0;
             if (section === 'direct')         return 0.85;
             if (section === 'explore')        return 0.85;
 
