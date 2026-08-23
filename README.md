@@ -31,7 +31,7 @@ Toystaller operates **100% client-side** inside your browser. It directly access
 
 ---
 
-## ✨ Features & Section Support
+##  Features & Section Support
 
 | Instagram Section | Supported Media | Extraction Capability | UI & Behavior |
 | :--- | :--- | :--- | :--- |
@@ -95,7 +95,7 @@ flowchart TD
 
 ---
 
-## 📥 Detailed Installation Guide (Step-by-Step)
+##  Detailed Installation Guide (Step-by-Step)
 
 To install and run **Toystaller for Instagram** on any Chromium-based browser (Google Chrome, Brave, Microsoft Edge, Opera, Vivaldi, Arc):
 
@@ -152,7 +152,7 @@ Look in the top-right corner of the Extensions page and toggle the switch labele
 
 ---
 
-## 🎮 How to Use
+##  How to Use
 
 1. **Download / Open Video in New Tab**:
    - Hover over any Reel or Video.
@@ -209,7 +209,3 @@ Contributions, feature suggestions, and bug reports are warmly welcome!
 - Open an Issue or Pull Request on [GitHub Issues](https://github.com/SudiptaSanki/Toystaller-Instagram/issues).
 
 ---
-
-<div align="center">
-Made with ❤️ by <a href="https://github.com/SudiptaSanki">Sudipta Sanki</a>
-</div>
