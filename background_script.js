@@ -62,10 +62,4 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     delete interceptedMedia[tabId];
 });
 
-chrome.action.onClicked.addListener((tab) => {
-    if (tab.id > 0) {
-        chrome.tabs.sendMessage(tab.id, { action: 'toggleDashboard' }).catch(err => {
-            console.log("Error sending toggleDashboard to tab:", err);
-        });
-    }
-});
+

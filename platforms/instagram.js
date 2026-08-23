@@ -470,14 +470,14 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
             if (section === 'reels')          return 1.0;
             if (section === 'post_standalone') return 1.0;
             if (section === 'stories')        return 0.9;
-            if (section === 'direct')         return 0.75;
-            if (section === 'explore')        return 0.7;
+            if (section === 'direct')         return 0.85;
+            if (section === 'explore')        return 0.85;
 
             // Profile tabs
             if (this.isProfileSection(section)) {
                 const isHeaderAvatar = media.closest('header');
-                if (isHeaderAvatar) return 0.8;
-                return 0.75; // Neat small buttons on grid thumbnails
+                if (isHeaderAvatar) return 0.85;
+                return 0.9; // Clearly visible buttons inside grid tiles
             }
 
             // Dynamic scaling based on media size

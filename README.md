@@ -15,15 +15,15 @@
 ---
 
 ### 🌐 Official Repositories & Documentation
-* 🌟 **Main Global Multi-Platform Suite:** [https://github.com/SudiptaSanki/Toystaller](https://github.com/SudiptaSanki/Toystaller) *(Instagram, Facebook, LinkedIn, WhatsApp)*
-* 📸 **Instagram Specialized Edition:** [https://github.com/SudiptaSanki/Toystaller-Instagram](https://github.com/SudiptaSanki/Toystaller-Instagram)
-* 📘 **Deep Technical Specification & Architecture:** [`DETAILS.md`](DETAILS.md)
+* **Main Global Multi-Platform Suite:** [https://github.com/SudiptaSanki/Toystaller](https://github.com/SudiptaSanki/Toystaller) *(Instagram, Facebook, LinkedIn, WhatsApp)*
+* **Instagram Specialized Edition:** [https://github.com/SudiptaSanki/Toystaller-Instagram](https://github.com/SudiptaSanki/Toystaller-Instagram)
+* **Deep Technical Specification & Architecture:** [`DETAILS.md`](DETAILS.md)
 
 </div>
 
 ---
 
-## 📖 Overview
+##  Overview
 
 **Toystaller for Instagram** is an advanced browser extension engineered specifically for Instagram's modern single-page React application. Traditional downloaders rely on server-side scrapers that require you to paste links into ad-filled websites, or they scrape low-resolution `blob:` preview URLs from the DOM.
 
@@ -31,7 +31,7 @@ Toystaller operates **100% client-side** inside your browser. It directly access
 
 ---
 
-##  Features & Section Support
+## Features & Section Support
 
 | Instagram Section | Supported Media | Extraction Capability | UI & Behavior |
 | :--- | :--- | :--- | :--- |
@@ -95,7 +95,7 @@ flowchart TD
 
 ---
 
-##  Detailed Installation Guide (Step-by-Step)
+## Detailed Installation Guide (Step-by-Step)
 
 To install and run **Toystaller for Instagram** on any Chromium-based browser (Google Chrome, Brave, Microsoft Edge, Opera, Vivaldi, Arc):
 

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Toystaller",
-  "version": "5.0",
-  "description": "Smart media downloader with shadow DOM UI and stealth injection.",
+  "name": "Toystaller for Instagram",
+  "version": "6.0",
+  "description": "Specialized HD media extractor for Instagram — Reels, Stories, Posts, Profiles, and DMs.",
   "icons": {
     "16": "Toystaller_logo.png",
     "48": "Toystaller_logo.png",
@@ -54,7 +54,8 @@
     }
   ],
   "action": {
-    "default_title": "Toystaller Downloader",
-    "default_icon": "Toystaller_logo.png"
+    "default_title": "Toystaller for Instagram",
+    "default_icon": "Toystaller_logo.png",
+    "default_popup": "popup.html"
   }
 }

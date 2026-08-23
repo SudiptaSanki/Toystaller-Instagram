@@ -1,12 +1,32 @@
 // overlay_manager.js
 // Tracks media elements and positions action buttons safely on document.body.
-// v3: Section-aware modal suppression, zero-bleed backdrop isolation, smart corner placement.
+// v4: Section-aware modal suppression, zero-bleed backdrop isolation, smart corner placement,
+//     clamped-inside-frame positioning, per-section toggle support.
 
 class OverlayManager {
     constructor() {
         this.overlays = new Map();
         this.activeEntry = null;
         this.hideTimeout = null;
+
+        // Per-section toggle settings (loaded from chrome.storage)
+        this._sectionToggles = {
+            toystaller_show_grid:    true,
+            toystaller_show_feed:    true,
+            toystaller_show_stories: true,
+            toystaller_show_dm:      true
+        };
+        this._loadToggles();
+
+        // Listen for settings changes from popup
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+            chrome.runtime.onMessage.addListener((msg) => {
+                if (msg && msg.action === 'toystaller_settings_changed') {
+                    this._sectionToggles[msg.key] = msg.value;
+                    this.updateAllPositions();
+                }
+            });
+        }
 
         this._onMouseMove = this._throttle(this._handlePointerMove.bind(this), 30);
         document.addEventListener('mousemove', this._onMouseMove, true);
@@ -30,6 +50,43 @@ class OverlayManager {
         }
 
         setInterval(() => this.updateAllPositions(), 1000);
+    }
+
+    _loadToggles() {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.get(Object.keys(this._sectionToggles), (result) => {
+                    if (chrome.runtime.lastError) return;
+                    for (const key of Object.keys(this._sectionToggles)) {
+                        if (result[key] !== undefined && result[key] !== null) {
+                            this._sectionToggles[key] = result[key];
+                        }
+                    }
+                    this.updateAllPositions();
+                });
+            }
+        } catch(e) { /* storage unavailable */ }
+    }
+
+    _isSectionDisabledByToggle() {
+        const platform = this._getPlatform();
+        if (!platform || !platform.getSection) return false;
+        const section = platform.getSection();
+
+        // Reels, modals, and standalone posts are ALWAYS enabled (never toggled off)
+        if (section === 'reels' || section === 'modal' || section === 'post_standalone') return false;
+
+        // Map sections to toggle keys
+        if (section === 'feed')    return !this._sectionToggles.toystaller_show_feed;
+        if (section === 'stories') return !this._sectionToggles.toystaller_show_stories;
+        if (section === 'direct')  return !this._sectionToggles.toystaller_show_dm;
+
+        // All profile grid sections and explore → grid toggle
+        if (section.startsWith('profile_') || section === 'explore') {
+            return !this._sectionToggles.toystaller_show_grid;
+        }
+
+        return false;
     }
 
     _getPlatform() {
@@ -425,27 +482,41 @@ class OverlayManager {
         const width = container.offsetWidth || 80;
         const height = container.offsetHeight || 36;
 
+        let top, left;
+
         switch (corner) {
             case 'bottom-right':
-                container.style.top = `${rect.bottom - height - pad}px`;
-                container.style.left = `${rect.right - width - pad}px`;
+                top = rect.bottom - height - pad;
+                left = rect.right - width - pad;
                 break;
             case 'bottom-left':
-                container.style.top = `${rect.bottom - height - pad}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.bottom - height - pad;
+                left = rect.left + pad;
                 break;
             case 'top-left':
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.left + pad;
                 break;
             case 'top-right':
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.right - width - pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.right - width - pad;
                 break;
             default:
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.left + pad;
         }
+
+        // CLAMP: Ensure buttons stay INSIDE the media frame boundaries
+        const minTop = rect.top + 2;
+        const maxTop = rect.bottom - height - 2;
+        const minLeft = rect.left + 2;
+        const maxLeft = rect.right - width - 2;
+
+        top = Math.max(minTop, Math.min(top, maxTop));
+        left = Math.max(minLeft, Math.min(left, maxLeft));
+
+        container.style.top = `${top}px`;
+        container.style.left = `${left}px`;
     }
 
     updatePosition(media, container) {
@@ -466,6 +537,15 @@ class OverlayManager {
 
         // Modal isolation check
         if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
+            container.style.display = 'none';
+            container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
+            if (this.activeEntry === entry) this.activeEntry = null;
+            return;
+        }
+
+        // Per-section toggle check
+        if (this._isSectionDisabledByToggle()) {
             container.style.display = 'none';
             container.style.visibility = 'hidden';
             container.style.pointerEvents = 'none';
