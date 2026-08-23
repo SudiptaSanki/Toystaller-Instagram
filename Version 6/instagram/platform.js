@@ -1,28 +1,90 @@
-// extensions/instagram/platform.js
-// Instagram platform configuration — sets window.ToystallerActivePlatform (content world)
-// and window.ToystallerPlatform (MAIN world for interceptor).
+window.ToystallerPlatforms = window.ToystallerPlatforms || {};
 
 (function() {
+    // ============================================================
+    // Instagram Section Route Map (v6.1)
+    // ============================================================
+    //
+    // URL Pattern                                    → Section
+    // ──────────────────────────────────────────────────────────────
+    // [Any URL when dialog open]                     → modal
+    // /                                              → feed
+    // /reels/ or /reel/<id>/                         → reels
+    // /stories/<username>/<id>/                      → stories
+    // /direct/ or /direct/inbox/ or /direct/t/<id>/  → direct
+    // /explore/ or /explore/tags/<tag>/               → explore
+    // /p/<shortcode>/ or /tv/<id>/                   → post_standalone
+    // /<username>/                                   → profile_posts  (default grid)
+    // /<username>/reels/                             → profile_reels
+    // /<username>/tagged/                            → profile_tagged
+    // /<username>/saved/                             → profile_saved
+    // /<username>/reposts/                           → profile_reposts
+    // /<username>/channels/                          → profile_channels
+    // /<username>/followers/ or /following/           → profile_social
+    // /accounts/*, /nametag/, /session/login/        → settings (ignored)
+    // ============================================================
+
     const instagramPlatform = {
-        name: 'Instagram',
-        version: 'v6.0',
-        specialization: 'Dedicated Instagram media extraction for Profile, Post Modals, Feed, Reels, Stories, and DMs.',
+        name: 'instagram',
+        version: 'v6.1',
+        specialization: 'Per-page Instagram media extraction — Profile Posts, Profile Reels, Tagged, Reposts, Saved, Feed, Reels Player, Stories, DMs, Explore, Post Modals, and Standalone Posts.',
 
         // --- Route & Section Detection ---
         getSection() {
-            const path = window.location.pathname.toLowerCase();
+            const path = window.location.pathname.toLowerCase().replace(/\/+$/, '') || '/';
+
+            // 1. Modal always takes priority (post/reel opened as dialog overlay)
             if (this.hasActiveModal()) return 'modal';
+
+            // 2. Top-level fixed routes
             if (path === '/' || path === '') return 'feed';
             if (path.startsWith('/reels') || path.startsWith('/reel/')) return 'reels';
             if (path.startsWith('/stories/')) return 'stories';
             if (path.startsWith('/direct/')) return 'direct';
             if (path.startsWith('/explore/')) return 'explore';
-            if (path.startsWith('/p/')) return 'post_standalone';
-            return 'profile'; // /<username>/, /<username>/saved/, /<username>/tagged/, etc.
+            if (path.startsWith('/p/') || path.startsWith('/tv/')) return 'post_standalone';
+
+            // 3. Settings / non-media pages — skip entirely
+            if (path.startsWith('/accounts/') || path.startsWith('/nametag') ||
+                path.startsWith('/session/') || path.startsWith('/emails/') ||
+                path.startsWith('/legal/') || path.startsWith('/about/') ||
+                path.startsWith('/developer/') || path.startsWith('/web/')) {
+                return 'settings';
+            }
+
+            // 4. Profile sub-pages: /<username>/<tab>/
+            //    Extract the second segment after the username
+            const segments = path.split('/').filter(Boolean);
+            if (segments.length >= 2) {
+                const tab = segments[1];
+                if (tab === 'reels')     return 'profile_reels';
+                if (tab === 'tagged')    return 'profile_tagged';
+                if (tab === 'saved')     return 'profile_saved';
+                if (tab === 'reposts')   return 'profile_reposts';
+                if (tab === 'channels')  return 'profile_channels';
+                if (tab === 'followers' || tab === 'following' || tab === 'mutualfollowers')
+                    return 'profile_social';
+                if (tab === 'guides')    return 'profile_guides';
+            }
+
+            // 5. Default: /<username>/ — main profile posts grid
+            return 'profile_posts';
         },
 
+        // Helper: Is this a profile-type page (any tab)?
+        isProfileSection(section) {
+            return section && section.startsWith('profile_');
+        },
+
+        // Helper: Is this a grid-based profile tab (posts, reels, tagged, reposts, saved)?
+        isProfileGridSection(section) {
+            return ['profile_posts', 'profile_reels', 'profile_tagged', 'profile_reposts', 'profile_saved'].includes(section);
+        },
+
+        // --- Corner Placement Config Per Section ---
         getPlatformConfig(path) {
             const section = this.getSection();
+
             if (section === 'modal') {
                 return { preferredCorners: ['top-left', 'bottom-left', 'top-right'], padding: 14 };
             }
@@ -35,12 +97,21 @@
             if (section === 'direct') {
                 return { preferredCorners: ['top-left', 'top-right'], padding: 8 };
             }
-            if (section === 'profile') {
+            if (section === 'explore') {
+                return { preferredCorners: ['top-right', 'top-left', 'bottom-right'], padding: 6 };
+            }
+            if (section === 'post_standalone') {
+                return { preferredCorners: ['top-left', 'bottom-left', 'top-right'], padding: 12 };
+            }
+            // All profile grid tabs
+            if (this.isProfileGridSection(section)) {
                 return { preferredCorners: ['top-right', 'top-left', 'bottom-right'], padding: 8 };
             }
+            // profile_social, profile_channels, profile_guides, settings
             return { preferredCorners: ['top-left', 'bottom-left', 'top-right'], padding: 12 };
         },
 
+        // --- Modal Detection ---
         hasActiveModal() {
             const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
             return dialog !== null && dialog.isConnected;
@@ -61,6 +132,7 @@
             return false;
         },
 
+        // --- Thumbnail / Eligibility Filter (per section) ---
         isThumbnail(media) {
             if (!media) return true;
             const tagName = media.tagName.toLowerCase();
@@ -71,28 +143,36 @@
             const section = this.getSection();
 
             // ==========================================
-            // 1. MODAL STATE (Post/Reel open in dialog)
+            // SETTINGS / SOCIAL pages — no media to extract
+            // ==========================================
+            if (section === 'settings' || section === 'profile_social' || section === 'profile_guides') {
+                return true;
+            }
+
+            // ==========================================
+            // MODAL STATE (Post/Reel open in dialog)
             // ==========================================
             if (section === 'modal') {
-                if (!this.isInsideModal(media)) {
-                    return true;
-                }
+                if (!this.isInsideModal(media)) return true;
 
+                // Inside modal: Exclude avatars and small UI elements
                 if (rect.width < 90 || rect.height < 90) return true;
                 if (naturalW < 90 || naturalH < 90) return true;
 
+                // Exclude avatars inside comments list
                 const inComments = media.closest('ul:not([class*="carousel" i]), [aria-label*="comment" i], [role="log"]');
                 if (inComments) {
                     const isCarouselSlide = media.closest('li[tabindex], li[class*="carousel" i], ul > li:only-child');
                     if (!isCarouselSlide && rect.width < 200) return true;
                 }
 
+                // Carousel: only show button for the currently visible slide
                 const carouselContainer = media.closest('ul, div[style*="overflow"]');
                 if (carouselContainer && carouselContainer.children.length > 1) {
                     const cRect = carouselContainer.getBoundingClientRect();
                     const mediaCenterX = rect.left + rect.width / 2;
                     if (mediaCenterX < cRect.left - 20 || mediaCenterX > cRect.right + 20) {
-                        return true;
+                        return true; // Offscreen carousel slide
                     }
                 }
 
@@ -105,9 +185,93 @@
             }
 
             // ==========================================
-            // 2. PROFILE PAGE (/<username>/)
+            // PROFILE POSTS GRID (/<username>/)
             // ==========================================
-            if (section === 'profile') {
+            if (section === 'profile_posts') {
+                // Header profile picture
+                const isHeaderAvatar = media.closest('header');
+                if (isHeaderAvatar) {
+                    if (rect.width < 60 || naturalW < 60) return true;
+                    return false; // Profile picture is downloadable
+                }
+
+                // Exclude story highlights circles
+                const isHighlight = media.closest('[role="menu"], [aria-label*="highlight" i]');
+                if (isHighlight) return true;
+
+                // Grid post tiles
+                const isGridPost = media.closest('a[href^="/p/"], a[href^="/reel/"], article');
+                if (isGridPost) {
+                    if (rect.width < 80 || rect.height < 80) return true;
+                    return false;
+                }
+
+                if (rect.width < 120 || rect.height < 120) return true;
+                return false;
+            }
+
+            // ==========================================
+            // PROFILE REELS TAB (/<username>/reels/)
+            // ==========================================
+            if (section === 'profile_reels') {
+                // Header profile picture
+                const isHeaderAvatar = media.closest('header');
+                if (isHeaderAvatar) {
+                    if (rect.width < 60 || naturalW < 60) return true;
+                    return false;
+                }
+
+                // Exclude story highlights
+                const isHighlight = media.closest('[role="menu"], [aria-label*="highlight" i]');
+                if (isHighlight) return true;
+
+                // Reel thumbnail tiles in the grid — typically <video poster> or cover <img>
+                const isReelTile = media.closest('a[href^="/reel/"], a[href^="/p/"], article');
+                if (isReelTile) {
+                    if (rect.width < 80 || rect.height < 80) return true;
+                    return false;
+                }
+
+                // Videos playing inline in the grid (hover previews)
+                if (tagName === 'video') {
+                    if (rect.width < 80 || rect.height < 80) return true;
+                    return false;
+                }
+
+                if (rect.width < 120 || rect.height < 120) return true;
+                return false;
+            }
+
+            // ==========================================
+            // PROFILE TAGGED TAB (/<username>/tagged/)
+            // ==========================================
+            if (section === 'profile_tagged') {
+                // Header avatar
+                const isHeaderAvatar = media.closest('header');
+                if (isHeaderAvatar) {
+                    if (rect.width < 60 || naturalW < 60) return true;
+                    return false;
+                }
+
+                // Highlights
+                const isHighlight = media.closest('[role="menu"], [aria-label*="highlight" i]');
+                if (isHighlight) return true;
+
+                // Tagged photo grid tiles
+                const isGridPost = media.closest('a[href^="/p/"], a[href^="/reel/"], article');
+                if (isGridPost) {
+                    if (rect.width < 80 || rect.height < 80) return true;
+                    return false;
+                }
+
+                if (rect.width < 120 || rect.height < 120) return true;
+                return false;
+            }
+
+            // ==========================================
+            // PROFILE REPOSTS TAB (/<username>/reposts/)
+            // ==========================================
+            if (section === 'profile_reposts') {
                 const isHeaderAvatar = media.closest('header');
                 if (isHeaderAvatar) {
                     if (rect.width < 60 || naturalW < 60) return true;
@@ -128,28 +292,79 @@
             }
 
             // ==========================================
-            // 3. REELS PAGE (/reels/, /reel/<id>/)
+            // PROFILE SAVED TAB (/<username>/saved/)
+            // ==========================================
+            if (section === 'profile_saved') {
+                const isHeaderAvatar = media.closest('header');
+                if (isHeaderAvatar) {
+                    if (rect.width < 60 || naturalW < 60) return true;
+                    return false;
+                }
+
+                const isHighlight = media.closest('[role="menu"], [aria-label*="highlight" i]');
+                if (isHighlight) return true;
+
+                // Saved collections may show collection cover images
+                const isGridPost = media.closest('a[href^="/p/"], a[href^="/reel/"], a[href*="/saved/"], article');
+                if (isGridPost) {
+                    if (rect.width < 80 || rect.height < 80) return true;
+                    return false;
+                }
+
+                if (rect.width < 120 || rect.height < 120) return true;
+                return false;
+            }
+
+            // ==========================================
+            // PROFILE CHANNELS TAB (/<username>/channels/)
+            // ==========================================
+            if (section === 'profile_channels') {
+                const isHeaderAvatar = media.closest('header');
+                if (isHeaderAvatar) {
+                    if (rect.width < 60 || naturalW < 60) return true;
+                    return false;
+                }
+
+                // Channel broadcast media
+                if (rect.width < 150 || rect.height < 120) return true;
+
+                // Exclude small circular avatars
+                const style = window.getComputedStyle(media);
+                if (style.borderRadius && (style.borderRadius.includes('50%') || parseInt(style.borderRadius) > 30)) {
+                    if (rect.width < 80) return true;
+                }
+
+                return false;
+            }
+
+            // ==========================================
+            // REELS PAGE (/reels/, /reel/<id>/)
             // ==========================================
             if (section === 'reels') {
                 if (tagName === 'video') {
+                    // Only target the main vertical reel video currently visible in viewport
                     const inViewport = rect.top < window.innerHeight * 0.8 && rect.bottom > window.innerHeight * 0.2;
                     if (!inViewport) return true;
                     if (rect.height < 300) return true;
                     return false;
                 }
+                // Thumbnails in reels page (suggested side reels) are excluded
                 if (rect.width < 250) return true;
                 return false;
             }
 
             // ==========================================
-            // 4. FEED HOME PAGE (/)
+            // FEED HOME PAGE (/)
             // ==========================================
             if (section === 'feed') {
+                // Exclude stories tray at top
                 const inStoriesTray = media.closest('[role="menu"], [aria-label*="stories" i], header');
                 if (inStoriesTray) return true;
 
+                // Exclude post author avatar
                 if (rect.width < 80 || rect.height < 80) return true;
 
+                // Main post in feed
                 const inFeedPost = media.closest('article');
                 if (inFeedPost) {
                     if (rect.width < 150) return true;
@@ -161,7 +376,43 @@
             }
 
             // ==========================================
-            // 5. STORIES PAGE (/stories/)
+            // STANDALONE POST PAGE (/p/<shortcode>/)
+            // ==========================================
+            if (section === 'post_standalone') {
+                // Post author avatar
+                if (rect.width < 80 || rect.height < 80) return true;
+                if (naturalW < 80 || naturalH < 80) return true;
+
+                // Comment section avatars
+                const inComments = media.closest('ul:not([class*="carousel" i]), [aria-label*="comment" i], [role="log"]');
+                if (inComments) {
+                    const isCarouselSlide = media.closest('li[tabindex], li[class*="carousel" i], ul > li:only-child');
+                    if (!isCarouselSlide && rect.width < 200) return true;
+                }
+
+                // Carousel: only visible slide
+                const carouselContainer = media.closest('ul, div[style*="overflow"]');
+                if (carouselContainer && carouselContainer.children.length > 1) {
+                    const cRect = carouselContainer.getBoundingClientRect();
+                    const mediaCenterX = rect.left + rect.width / 2;
+                    if (mediaCenterX < cRect.left - 20 || mediaCenterX > cRect.right + 20) {
+                        return true;
+                    }
+                }
+
+                // Suggested posts below — still downloadable if large enough
+                const inArticle = media.closest('article');
+                if (inArticle) {
+                    if (rect.width < 150) return true;
+                    return false;
+                }
+
+                if (rect.width < 150 || rect.height < 150) return true;
+                return false;
+            }
+
+            // ==========================================
+            // STORIES PAGE (/stories/)
             // ==========================================
             if (section === 'stories') {
                 const screenCenterX = window.innerWidth / 2;
@@ -172,32 +423,64 @@
             }
 
             // ==========================================
-            // 6. DIRECT MESSAGES (/direct/)
+            // DIRECT MESSAGES (/direct/)
             // ==========================================
             if (section === 'direct') {
                 if (rect.width < 150 || rect.height < 120) return true;
+
+                // Exclude contact list avatars in sidebar
                 const inNav = media.closest('[role="list"], [role="listbox"], [role="navigation"]');
                 if (inNav) return true;
+
+                // Exclude circular profile pictures in chat
                 const style = window.getComputedStyle(media);
                 if (style.borderRadius && (style.borderRadius.includes('50%') || parseInt(style.borderRadius) > 30)) return true;
+
                 return false;
             }
 
+            // ==========================================
+            // EXPLORE PAGE (/explore/)
+            // ==========================================
+            if (section === 'explore') {
+                // Explore grid has a mosaic of images/videos of varying sizes
+                if (rect.width < 80 || rect.height < 80) return true;
+
+                const isGridItem = media.closest('a[href^="/p/"], a[href^="/reel/"], article');
+                if (isGridItem) {
+                    return false; // All explore grid items are downloadable
+                }
+
+                // Avatars and other small elements
+                if (rect.width < 120 || rect.height < 120) return true;
+                return false;
+            }
+
+            // ==========================================
+            // DEFAULT FALLBACK
+            // ==========================================
             if (naturalW >= 150 && naturalH >= 150 && rect.width >= 100 && rect.height >= 100) return false;
             return true;
         },
 
+        // --- Button Scale Per Section ---
         getButtonScale(media) {
             const section = this.getSection();
-            if (section === 'modal') return 1.0;
-            if (section === 'reels') return 1.0;
-            if (section === 'stories') return 0.9;
-            if (section === 'direct') return 0.75;
-            if (section === 'profile') {
+            if (section === 'modal')          return 1.0;
+            if (section === 'reels')          return 1.0;
+            if (section === 'post_standalone') return 1.0;
+            if (section === 'stories')        return 0.9;
+            if (section === 'direct')         return 0.75;
+            if (section === 'explore')        return 0.7;
+
+            // Profile tabs
+            if (this.isProfileSection(section)) {
                 const isHeaderAvatar = media.closest('header');
                 if (isHeaderAvatar) return 0.8;
-                return 0.75;
+                return 0.75; // Neat small buttons on grid thumbnails
             }
+
+            // Dynamic scaling based on media size
             const rect = media.getBoundingClientRect();
             const minSide = Math.min(rect.width, rect.height);
             if (minSide < 180) return 0.75;
@@ -205,25 +488,13 @@
             return 1.0;
         },
 
+        // --- React Fiber Extraction ---
         useDirectDownload: false,
         useReactThumbnail: true,
 
         isInternalUrl(url) {
             const lower = (url || '').toLowerCase();
             return lower.includes('//www.instagram.com') || lower.includes('//instagram.com');
-        },
-
-        filterBackgroundUrls(candidates, isVideo) {
-            return candidates.filter(u => {
-                const lower = u.toLowerCase();
-                if (lower.includes('/image/') || lower.includes('.jpg') || lower.includes('.png') || lower.includes('.webp')) return false;
-                return lower.includes('cdninstagram.com') || lower.includes('.mp4');
-            });
-        },
-
-        // --- Interceptor Interface (MAIN world) ---
-        getInterceptUrls() {
-            return ['instagram.com', 'graph.', '/api/v', 'graphql'];
         },
 
         shouldSkipReactValue(val, key, isVideoContext) {
@@ -308,15 +579,20 @@
             return null;
         },
 
+        filterBackgroundUrls(candidates, isVideo) {
+            return candidates.filter(u => {
+                const lower = u.toLowerCase();
+                if (lower.includes('/image/') || lower.includes('.jpg') || lower.includes('.png') || lower.includes('.webp')) return false;
+                return lower.includes('cdninstagram.com') || lower.includes('.mp4');
+            });
+        },
+
         extractVideoUrlFromDOM(el) {
             return null;
         }
     };
 
-    if (typeof window !== 'undefined') {
-        window.ToystallerPlatforms = window.ToystallerPlatforms || {};
-        window.ToystallerPlatforms['instagram'] = instagramPlatform;
-        window.ToystallerPlatform = instagramPlatform;
-        window.ToystallerActivePlatform = instagramPlatform;
-    }
+    window.ToystallerPlatforms['instagram'] = instagramPlatform;
+    window.ToystallerPlatform = instagramPlatform;
+    window.ToystallerActivePlatform = instagramPlatform;
 })();
