@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Toystaller for Instagram",
+  "name": "Toystaller: Instagram Edition",
   "version": "6.0",
   "description": "Download and open high-quality images and videos from Instagram — Reels, Stories, Posts, and DMs.",
   "icons": {
@@ -44,7 +44,7 @@
     }
   ],
   "action": {
-    "default_title": "Toystaller for Instagram",
+    "default_title": "Toystaller: Instagram Edition",
     "default_icon": "icon.png"
   }
 }

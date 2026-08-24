@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧸 Toystaller for Instagram (v6.0)
+# 🧸 Toystaller: Instagram Edition (v6.0)
 
 **High-Performance, Stealth Media Downloader & Media Viewer for Instagram**
 
@@ -25,7 +25,7 @@
 
 ##  Overview
 
-**Toystaller for Instagram** is an advanced browser extension engineered specifically for Instagram's modern single-page React application. Traditional downloaders rely on server-side scrapers that require you to paste links into ad-filled websites, or they scrape low-resolution `blob:` preview URLs from the DOM.
+**Toystaller: Instagram Edition** is an advanced browser extension engineered specifically for Instagram's modern single-page React application. Traditional downloaders rely on server-side scrapers that require you to paste links into ad-filled websites, or they scrape low-resolution `blob:` preview URLs from the DOM.
 
 Toystaller operates **100% client-side** inside your browser. It directly accesses Instagram's internal React Fiber tree and network buffers to extract the original, full-resolution master MP4 videos and maximum-quality photos directly from Instagram's official CDN (`*.cdninstagram.com`).
 
@@ -97,7 +97,7 @@ flowchart TD
 
 ## Detailed Installation Guide (Step-by-Step)
 
-To install and run **Toystaller for Instagram** on any Chromium-based browser (Google Chrome, Brave, Microsoft Edge, Opera, Vivaldi, Arc):
+To install and run **Toystaller: Instagram Edition** on any Chromium-based browser (Google Chrome, Brave, Microsoft Edge, Opera, Vivaldi, Arc):
 
 ### Prerequisites
 - Any modern Chromium browser (Chrome 102+ recommended).
@@ -146,7 +146,7 @@ Look in the top-right corner of the Extensions page and toggle the switch labele
 
 ### Step 5: Pin and Verify the Extension
 1. Click the **Puzzle icon** (Extensions menu) in your browser toolbar.
-2. Locate **Toystaller for Instagram** and click the **Pin icon** to pin it to your toolbar.
+2. Locate **Toystaller: Instagram Edition** and click the **Pin icon** to pin it to your toolbar.
 3. Open [Instagram](https://www.instagram.com/) or refresh any existing Instagram tab.
 4. Hover over any post, reel, story, or profile picture — you will see the **Blue (Open Media)** and **Red (Open Poster)** overlay buttons!
 

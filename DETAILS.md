@@ -236,7 +236,7 @@ graph TD
 
 ## 8. Comparison with Alternative Approaches
 
-| Feature / Metric | Toystaller for Instagram | Generic Web Scraper / Web Tools | DOM Video Scraping Extensions |
+| Feature / Metric | Toystaller: Instagram Edition | Generic Web Scraper / Web Tools | DOM Video Scraping Extensions |
 | :--- | :--- | :--- | :--- |
 | **Video Quality** | **1080p / Original Master MP4** | Often capped at 720p | Capped at compressed preview |
 | **Image Resolution** | **Uncompressed (up to 1440p)** | Compressed JPEG | Screen-size cropped preview |
