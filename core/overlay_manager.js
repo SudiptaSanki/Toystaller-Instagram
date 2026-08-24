@@ -475,7 +475,50 @@ class OverlayManager {
         return corners[0] || 'top-left';
     }
 
-    applyCornerPosition(rect, container, corner) {
+    // Compute the actually visible portion of a media element by intersecting
+    // its rect with all overflow-clipping ancestors and the viewport.
+    _getVisibleRect(media) {
+        let vRect = media.getBoundingClientRect();
+        let visTop = vRect.top;
+        let visLeft = vRect.left;
+        let visBottom = vRect.bottom;
+        let visRight = vRect.right;
+
+        let node = media.parentElement;
+        let depth = 0;
+        while (node && node !== document.body && node !== document.documentElement && depth < 15) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                const style = window.getComputedStyle(node);
+                const ov = style.overflow + style.overflowX + style.overflowY;
+                if (ov.includes('hidden') || ov.includes('scroll') || ov.includes('auto') || ov.includes('clip')) {
+                    const pRect = node.getBoundingClientRect();
+                    visTop = Math.max(visTop, pRect.top);
+                    visLeft = Math.max(visLeft, pRect.left);
+                    visBottom = Math.min(visBottom, pRect.bottom);
+                    visRight = Math.min(visRight, pRect.right);
+                }
+            }
+            node = node.parentElement;
+            depth++;
+        }
+
+        // Also clamp to viewport
+        visTop = Math.max(visTop, 0);
+        visLeft = Math.max(visLeft, 0);
+        visBottom = Math.min(visBottom, window.innerHeight);
+        visRight = Math.min(visRight, window.innerWidth);
+
+        return {
+            top: visTop,
+            left: visLeft,
+            bottom: visBottom,
+            right: visRight,
+            width: Math.max(0, visRight - visLeft),
+            height: Math.max(0, visBottom - visTop)
+        };
+    }
+
+    applyCornerPosition(rect, container, corner, media) {
         const config = this.getPlatformConfig();
         const pad = config.padding;
         const topOffset = config.topOffset || 0;
@@ -506,11 +549,15 @@ class OverlayManager {
                 left = rect.left + pad;
         }
 
-        // CLAMP: Ensure buttons stay INSIDE the media frame boundaries
-        const minTop = rect.top + 2;
-        const maxTop = rect.bottom - height - 2;
-        const minLeft = rect.left + 2;
-        const maxLeft = rect.right - width - 2;
+        // Compute the VISIBLE portion of the media (accounts for sticky headers,
+        // overflow-hidden ancestors, and viewport edges)
+        const vis = media ? this._getVisibleRect(media) : rect;
+
+        // CLAMP: Ensure buttons stay INSIDE the VISIBLE media frame
+        const minTop = vis.top + 2;
+        const maxTop = vis.bottom - height - 2;
+        const minLeft = vis.left + 2;
+        const maxLeft = vis.right - width - 2;
 
         top = Math.max(minTop, Math.min(top, maxTop));
         left = Math.max(minLeft, Math.min(left, maxLeft));
@@ -594,7 +641,7 @@ class OverlayManager {
 
         const corner = this.pickBestCorner(media, rect, container);
         entry.corner = corner;
-        this.applyCornerPosition(rect, container, corner);
+        this.applyCornerPosition(rect, container, corner, media);
     }
 
     updateAllPositions() {

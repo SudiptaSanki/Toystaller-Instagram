@@ -1,12 +1,32 @@
-// core/overlay_manager.js
+// overlay_manager.js
 // Tracks media elements and positions action buttons safely on document.body.
-// v3: Section-aware modal suppression, zero-bleed backdrop isolation, smart corner placement.
+// v4: Section-aware modal suppression, zero-bleed backdrop isolation, smart corner placement,
+//     clamped-inside-frame positioning, per-section toggle support.
 
 class OverlayManager {
     constructor() {
         this.overlays = new Map();
         this.activeEntry = null;
         this.hideTimeout = null;
+
+        // Per-section toggle settings (loaded from chrome.storage)
+        this._sectionToggles = {
+            toystaller_show_grid:    true,
+            toystaller_show_feed:    true,
+            toystaller_show_stories: true,
+            toystaller_show_dm:      true
+        };
+        this._loadToggles();
+
+        // Listen for settings changes from popup
+        if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+            chrome.runtime.onMessage.addListener((msg) => {
+                if (msg && msg.action === 'toystaller_settings_changed') {
+                    this._sectionToggles[msg.key] = msg.value;
+                    this.updateAllPositions();
+                }
+            });
+        }
 
         this._onMouseMove = this._throttle(this._handlePointerMove.bind(this), 30);
         document.addEventListener('mousemove', this._onMouseMove, true);
@@ -30,6 +50,43 @@ class OverlayManager {
         }
 
         setInterval(() => this.updateAllPositions(), 1000);
+    }
+
+    _loadToggles() {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+                chrome.storage.local.get(Object.keys(this._sectionToggles), (result) => {
+                    if (chrome.runtime.lastError) return;
+                    for (const key of Object.keys(this._sectionToggles)) {
+                        if (result[key] !== undefined && result[key] !== null) {
+                            this._sectionToggles[key] = result[key];
+                        }
+                    }
+                    this.updateAllPositions();
+                });
+            }
+        } catch(e) { /* storage unavailable */ }
+    }
+
+    _isSectionDisabledByToggle() {
+        const platform = this._getPlatform();
+        if (!platform || !platform.getSection) return false;
+        const section = platform.getSection();
+
+        // Reels, modals, and standalone posts are ALWAYS enabled (never toggled off)
+        if (section === 'reels' || section === 'modal' || section === 'post_standalone') return false;
+
+        // Map sections to toggle keys
+        if (section === 'feed')    return !this._sectionToggles.toystaller_show_feed;
+        if (section === 'stories') return !this._sectionToggles.toystaller_show_stories;
+        if (section === 'direct')  return !this._sectionToggles.toystaller_show_dm;
+
+        // All profile grid sections and explore → grid toggle
+        if (section.startsWith('profile_') || section === 'explore') {
+            return !this._sectionToggles.toystaller_show_grid;
+        }
+
+        return false;
     }
 
     _getPlatform() {
@@ -154,6 +211,7 @@ class OverlayManager {
 
         // 1. Check if hovering directly over an existing button
         for (const [media, entry] of this.overlays.entries()) {
+            // Modal isolation: If a modal is open, strictly ignore any media not inside the modal
             if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
                 if (entry.container.style.display !== 'none') {
                     entry.container.style.display = 'none';
@@ -206,6 +264,7 @@ class OverlayManager {
         }
 
         if (matchedCandidates.length > 0) {
+            // Prioritize <video> tags over <img> tags (e.g. poster images covering the video)
             const videoCandidate = matchedCandidates.find(c => c.media.tagName.toLowerCase() === 'video');
             if (videoCandidate) {
                 this._show(videoCandidate.entry);
@@ -215,6 +274,8 @@ class OverlayManager {
             return;
         }
 
+        // If no candidate was actually hit by elementsFromPoint (e.g. hovering on dialog background / comments),
+        // hide any active overlay rather than guessing incorrectly.
         this._scheduleHide();
     }
 
@@ -414,34 +475,95 @@ class OverlayManager {
         return corners[0] || 'top-left';
     }
 
-    applyCornerPosition(rect, container, corner) {
+    // Compute the actually visible portion of a media element by intersecting
+    // its rect with all overflow-clipping ancestors and the viewport.
+    _getVisibleRect(media) {
+        let vRect = media.getBoundingClientRect();
+        let visTop = vRect.top;
+        let visLeft = vRect.left;
+        let visBottom = vRect.bottom;
+        let visRight = vRect.right;
+
+        let node = media.parentElement;
+        let depth = 0;
+        while (node && node !== document.body && node !== document.documentElement && depth < 15) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+                const style = window.getComputedStyle(node);
+                const ov = style.overflow + style.overflowX + style.overflowY;
+                if (ov.includes('hidden') || ov.includes('scroll') || ov.includes('auto') || ov.includes('clip')) {
+                    const pRect = node.getBoundingClientRect();
+                    visTop = Math.max(visTop, pRect.top);
+                    visLeft = Math.max(visLeft, pRect.left);
+                    visBottom = Math.min(visBottom, pRect.bottom);
+                    visRight = Math.min(visRight, pRect.right);
+                }
+            }
+            node = node.parentElement;
+            depth++;
+        }
+
+        // Also clamp to viewport
+        visTop = Math.max(visTop, 0);
+        visLeft = Math.max(visLeft, 0);
+        visBottom = Math.min(visBottom, window.innerHeight);
+        visRight = Math.min(visRight, window.innerWidth);
+
+        return {
+            top: visTop,
+            left: visLeft,
+            bottom: visBottom,
+            right: visRight,
+            width: Math.max(0, visRight - visLeft),
+            height: Math.max(0, visBottom - visTop)
+        };
+    }
+
+    applyCornerPosition(rect, container, corner, media) {
         const config = this.getPlatformConfig();
         const pad = config.padding;
         const topOffset = config.topOffset || 0;
         const width = container.offsetWidth || 80;
         const height = container.offsetHeight || 36;
 
+        let top, left;
+
         switch (corner) {
             case 'bottom-right':
-                container.style.top = `${rect.bottom - height - pad}px`;
-                container.style.left = `${rect.right - width - pad}px`;
+                top = rect.bottom - height - pad;
+                left = rect.right - width - pad;
                 break;
             case 'bottom-left':
-                container.style.top = `${rect.bottom - height - pad}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.bottom - height - pad;
+                left = rect.left + pad;
                 break;
             case 'top-left':
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.left + pad;
                 break;
             case 'top-right':
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.right - width - pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.right - width - pad;
                 break;
             default:
-                container.style.top = `${rect.top + pad + topOffset}px`;
-                container.style.left = `${rect.left + pad}px`;
+                top = rect.top + pad + topOffset;
+                left = rect.left + pad;
         }
+
+        // Compute the VISIBLE portion of the media (accounts for sticky headers,
+        // overflow-hidden ancestors, and viewport edges)
+        const vis = media ? this._getVisibleRect(media) : rect;
+
+        // CLAMP: Ensure buttons stay INSIDE the VISIBLE media frame
+        const minTop = vis.top + 2;
+        const maxTop = vis.bottom - height - 2;
+        const minLeft = vis.left + 2;
+        const maxLeft = vis.right - width - 2;
+
+        top = Math.max(minTop, Math.min(top, maxTop));
+        left = Math.max(minLeft, Math.min(left, maxLeft));
+
+        container.style.top = `${top}px`;
+        container.style.left = `${left}px`;
     }
 
     updatePosition(media, container) {
@@ -462,6 +584,15 @@ class OverlayManager {
 
         // Modal isolation check
         if (hasModal && platform && platform.isInsideModal && !platform.isInsideModal(media)) {
+            container.style.display = 'none';
+            container.style.visibility = 'hidden';
+            container.style.pointerEvents = 'none';
+            if (this.activeEntry === entry) this.activeEntry = null;
+            return;
+        }
+
+        // Per-section toggle check
+        if (this._isSectionDisabledByToggle()) {
             container.style.display = 'none';
             container.style.visibility = 'hidden';
             container.style.pointerEvents = 'none';
@@ -510,7 +641,7 @@ class OverlayManager {
 
         const corner = this.pickBestCorner(media, rect, container);
         entry.corner = corner;
-        this.applyCornerPosition(rect, container, corner);
+        this.applyCornerPosition(rect, container, corner, media);
     }
 
     updateAllPositions() {
