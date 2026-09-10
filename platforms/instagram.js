@@ -113,8 +113,20 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
 
         // --- Modal Detection ---
         hasActiveModal() {
-            const dialog = document.querySelector('[role="dialog"], [aria-modal="true"]');
-            return dialog !== null && dialog.isConnected;
+            const dialogs = document.querySelectorAll('[role="dialog"], [aria-modal="true"]');
+            for (const d of dialogs) {
+                if (d.isConnected) {
+                    const style = window.getComputedStyle(d);
+                    if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
+                        const rect = d.getBoundingClientRect();
+                        // A post modal usually covers most of the screen
+                        if (rect.width > window.innerWidth * 0.4 && rect.height > window.innerHeight * 0.4) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
         },
 
         getActiveModal() {
@@ -130,6 +142,16 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
                 if (d.contains(media)) return true;
             }
             return false;
+        },
+
+        getHoverHost(media) {
+            const aagv = media.closest('div._aagv');
+            if (aagv) return aagv;
+            
+            const li = media.closest('li');
+            if (li) return li;
+            
+            return null;
         },
 
         // --- Thumbnail / Eligibility Filter (per section) ---
@@ -166,15 +188,7 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
                     if (!isCarouselSlide && rect.width < 200) return true;
                 }
 
-                // Carousel: only show button for the currently visible slide
-                const carouselContainer = media.closest('ul, div[style*="overflow"]');
-                if (carouselContainer && carouselContainer.children.length > 1) {
-                    const cRect = carouselContainer.getBoundingClientRect();
-                    const mediaCenterX = rect.left + rect.width / 2;
-                    if (mediaCenterX < cRect.left - 20 || mediaCenterX > cRect.right + 20) {
-                        return true; // Offscreen carousel slide
-                    }
-                }
+                // Carousel check removed: overlay_manager.js handles clipping and IntersectionObserver natively.
 
                 const role = (media.getAttribute('role') || '').toLowerCase();
                 if (role === 'presentation' || role === 'none') {
@@ -390,15 +404,7 @@ window.ToystallerPlatforms = window.ToystallerPlatforms || {};
                     if (!isCarouselSlide && rect.width < 200) return true;
                 }
 
-                // Carousel: only visible slide
-                const carouselContainer = media.closest('ul, div[style*="overflow"]');
-                if (carouselContainer && carouselContainer.children.length > 1) {
-                    const cRect = carouselContainer.getBoundingClientRect();
-                    const mediaCenterX = rect.left + rect.width / 2;
-                    if (mediaCenterX < cRect.left - 20 || mediaCenterX > cRect.right + 20) {
-                        return true;
-                    }
-                }
+                // Carousel check removed: overlay_manager.js handles clipping and IntersectionObserver natively.
 
                 // Suggested posts below — still downloadable if large enough
                 const inArticle = media.closest('article');

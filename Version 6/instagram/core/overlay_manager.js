@@ -121,6 +121,12 @@ class OverlayManager {
     }
 
     _findHoverHost(media) {
+        const platform = this._getPlatform();
+        if (platform && platform.getHoverHost) {
+            const host = platform.getHoverHost(media);
+            if (host) return host;
+        }
+
         const mediaRect = media.getBoundingClientRect();
         if (mediaRect.width === 0 || mediaRect.height === 0) return media;
 
