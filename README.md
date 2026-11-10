@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🧸 Toystaller: Instagram Edition (v6.0)
+# 🧸 Toystaller: Instagram Edition (v1.0)
 
 **High-Performance, Stealth Media Downloader & Media Viewer for Instagram**
 
